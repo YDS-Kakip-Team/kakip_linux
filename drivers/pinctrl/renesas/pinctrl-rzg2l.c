@@ -52,6 +52,8 @@
 #define PIN_CFG_FILONOFF		BIT(10)
 #define PIN_CFG_FILNUM			BIT(11)
 #define PIN_CFG_FILCLKSEL		BIT(12)
+#define PIN_CFG_NOD			BIT(13)
+#define PIN_CFG_SMT			BIT(14)
 
 #define RZG2L_MPXED_PIN_FUNCS		(PIN_CFG_IOLH_A | \
 					 PIN_CFG_SR | \
@@ -59,6 +61,10 @@
 					 PIN_CFG_FILONOFF | \
 					 PIN_CFG_FILNUM | \
 					 PIN_CFG_FILCLKSEL)
+
+#define RZV2H_MPXED_PIN_FUNCS		(RZG2L_MPXED_PIN_FUNCS | \
+					 PIN_CFG_NOD | \
+					 PIN_CFG_SMT)
 
 #define RZG2L_MPXED_ETH_PIN_FUNCS(x)	((x) | \
 					 PIN_CFG_FILONOFF | \
@@ -94,7 +100,10 @@
 #define IOLH(n)			(0x1000 + (n) * 8)
 #define SR(n)			(0x1400 + (n) * 8)
 #define IEN(n)			(0x1800 + (n) * 8)
+#define PUPD(n)			(0x1C00 + (n) * 8)
 #define ISEL(n)			(0x2C00 + 0x80 + (n) * 8)
+#define NOD(n)			(0x3000 + (n) * 8)
+#define SMT(n)			(0x3400 + (n) * 8)
 #define PWPR			(0x3014)
 #define PWPR_RZ_V2H		(0x3C04)
 #define SD_CH(n)		(0x3000 + (n) * 4)
@@ -119,6 +128,9 @@
 #define IEN_MASK		0x01
 #define SR_MASK			0x01
 #define IOLH_MASK		0x03
+#define PUPD_MASK		0x03
+#define NOD_MASK		0x01
+#define SMT_MASK		0x01
 
 #define PM_INPUT		0x1
 #define PM_OUTPUT		0x2
@@ -292,6 +304,19 @@ struct rzg2l_backup_data {
 	u8 oen_reg;
 };
 
+struct rzg2l_pinconf {
+	struct {
+		unsigned int groupa_mA[4];
+		unsigned int groupb_oi[4];
+	} iolh;
+
+	struct {
+		unsigned int bias_disable[2];
+		unsigned int bias_pull_up;
+		unsigned int bias_pull_down;
+	} pupd;
+};
+
 struct rzg2l_pinctrl_data {
 	const char * const *port_pins;
 	const u32 *port_pin_configs;
@@ -306,6 +331,7 @@ struct rzg2l_pinctrl_data {
 	u32 pwpr;
 	u32 oen_reg_offset;
 	unsigned int n_ports;
+	struct rzg2l_pinconf pinconf;
 };
 
 struct rzg2l_pinctrl {
@@ -338,8 +364,31 @@ struct rzg2l_pinctrl {
 	void				*backup;
 };
 
-static const unsigned int iolh_groupa_mA[] = { 2, 4, 8, 12 };
-static const unsigned int iolh_groupb_oi[] = { 100, 66, 50, 33 };
+const struct rzg2l_pinconf rzg2l_pinconfigs = {
+	.iolh = {
+		.groupa_mA = { 2, 4, 8, 12 },
+		.groupb_oi = { 100, 66, 50, 33 },
+
+	},
+
+	.pupd = {
+		.bias_disable	= { 0, 0 },
+		.bias_pull_up	= 1,
+		.bias_pull_down = 2,
+	},
+};
+
+const struct rzg2l_pinconf rzv2h_pinconfigs = {
+	.iolh = {
+		.groupa_mA = { 1, 2, 4, 6 },
+	},
+
+	.pupd = {
+		.bias_disable   = { 0, 1 },
+		.bias_pull_down = 2,
+		.bias_pull_up	= 3,
+	},
+};
 
 static void rzg2l_pinctrl_set_pfc_mode(struct rzg2l_pinctrl *pctrl,
 				       u8 port, u8 pin, u8 func)
@@ -735,7 +784,8 @@ static int rzg2l_pinctrl_pinconf_get(struct pinctrl_dev *pctldev,
 		bit = RZG2L_SINGLE_PIN_GET_BIT(*pin_data);
 	} else {
 		cfg = RZG2L_GPIO_PORT_GET_CFGS(*pin_data);
-		port_offset = RZG2L_PIN_ID_TO_PORT_OFFSET(_pin);
+		port_offset = RZG2L_PIN_ID_TO_PORT_OFFSET(_pin) +
+				pctrl->data->extended_reg_offset;
 		bit = RZG2L_PIN_ID_TO_PIN(_pin);
 
 		if (rzg2l_validate_gpio_pin(pctrl, *pin_data, RZG2L_PIN_ID_TO_PORT(_pin), bit))
@@ -788,7 +838,7 @@ static int rzg2l_pinctrl_pinconf_get(struct pinctrl_dev *pctldev,
 			return -EINVAL;
 
 		index = rzg2l_read_pin_config(pctrl, IOLH(port_offset), bit, IOLH_MASK);
-		arg = iolh_groupa_mA[index];
+		arg = pctrl->data->pinconf.iolh.groupa_mA[index];
 		break;
 	}
 
@@ -799,7 +849,7 @@ static int rzg2l_pinctrl_pinconf_get(struct pinctrl_dev *pctldev,
 			return -EINVAL;
 
 		index = rzg2l_read_pin_config(pctrl, IOLH(port_offset), bit, IOLH_MASK);
-		arg = iolh_groupb_oi[index];
+		arg = pctrl->data->pinconf.iolh.groupb_oi[index];
 		break;
 	}
 
@@ -808,6 +858,49 @@ static int rzg2l_pinctrl_pinconf_get(struct pinctrl_dev *pctldev,
 			return -EINVAL;
 
 		arg = rzg2l_read_pin_config(pctrl, SR(port_offset), bit, SR_MASK);
+		break;
+	}
+
+	case PIN_CONFIG_BIAS_DISABLE:
+	case PIN_CONFIG_BIAS_PULL_UP:
+	case PIN_CONFIG_BIAS_PULL_DOWN: {
+		unsigned int bias;
+
+		if (!(cfg & PIN_CFG_PUPD))
+			return -EINVAL;
+
+		bias = rzg2l_read_pin_config(pctrl, PUPD(port_offset), bit, PUPD_MASK);
+		if (((bias == pctrl->data->pinconf.pupd.bias_disable[0] ||
+		      bias == pctrl->data->pinconf.pupd.bias_disable[1]) &&
+				(param != PIN_CONFIG_BIAS_DISABLE)) ||
+		     (bias == pctrl->data->pinconf.pupd.bias_pull_down &&
+				 param != PIN_CONFIG_BIAS_PULL_DOWN) ||
+		     (bias == pctrl->data->pinconf.pupd.bias_pull_up &&
+				 param != PIN_CONFIG_BIAS_PULL_UP))
+			return -EINVAL;
+
+		break;
+	}
+
+	case PIN_CONFIG_DRIVE_OPEN_DRAIN: {
+		if (!(cfg & PIN_CFG_NOD))
+			return -EINVAL;
+
+		arg = rzg2l_read_pin_config(pctrl, NOD(port_offset), bit, NOD_MASK);
+		if (!arg)
+			return -EINVAL;
+
+		break;
+	}
+
+	case PIN_CONFIG_INPUT_SCHMITT_ENABLE: {
+		if (!(cfg & PIN_CFG_SMT))
+			return -EINVAL;
+
+		arg = rzg2l_read_pin_config(pctrl, SMT(port_offset), bit, SMT_MASK);
+		if (!arg)
+			return -EINVAL;
+
 		break;
 	}
 
@@ -845,7 +938,8 @@ static int rzg2l_pinctrl_pinconf_set(struct pinctrl_dev *pctldev,
 		bit = RZG2L_SINGLE_PIN_GET_BIT(*pin_data);
 	} else {
 		cfg = RZG2L_GPIO_PORT_GET_CFGS(*pin_data);
-		port_offset = RZG2L_PIN_ID_TO_PORT_OFFSET(_pin);
+		port_offset = RZG2L_PIN_ID_TO_PORT_OFFSET(_pin) +
+				pctrl->data->extended_reg_offset;
 		bit = RZG2L_PIN_ID_TO_PIN(_pin);
 
 		if (rzg2l_validate_gpio_pin(pctrl, *pin_data, RZG2L_PIN_ID_TO_PORT(_pin), bit))
@@ -907,11 +1001,12 @@ static int rzg2l_pinctrl_pinconf_set(struct pinctrl_dev *pctldev,
 			if (!(cfg & PIN_CFG_IOLH_A))
 				return -EINVAL;
 
-			for (index = 0; index < ARRAY_SIZE(iolh_groupa_mA); index++) {
-				if (arg == iolh_groupa_mA[index])
+			for (index = 0; index < ARRAY_SIZE(pctrl->data->
+						pinconf.iolh.groupa_mA); index++) {
+				if (arg == pctrl->data->pinconf.iolh.groupa_mA[index])
 					break;
 			}
-			if (index >= ARRAY_SIZE(iolh_groupa_mA))
+			if (index >= ARRAY_SIZE(pctrl->data->pinconf.iolh.groupa_mA))
 				return -EINVAL;
 
 			rzg2l_rmw_pin_config(pctrl, IOLH(port_offset), bit, IOLH_MASK, index);
@@ -925,11 +1020,12 @@ static int rzg2l_pinctrl_pinconf_set(struct pinctrl_dev *pctldev,
 			if (!(cfg & PIN_CFG_IOLH_B))
 				return -EINVAL;
 
-			for (index = 0; index < ARRAY_SIZE(iolh_groupb_oi); index++) {
-				if (arg == iolh_groupb_oi[index])
+			for (index = 0; index < ARRAY_SIZE(pctrl->data->
+						pinconf.iolh.groupb_oi); index++) {
+				if (arg == pctrl->data->pinconf.iolh.groupb_oi[index])
 					break;
 			}
-			if (index >= ARRAY_SIZE(iolh_groupb_oi))
+			if (index >= ARRAY_SIZE(pctrl->data->pinconf.iolh.groupb_oi))
 				return -EINVAL;
 
 			rzg2l_rmw_pin_config(pctrl, IOLH(port_offset), bit, IOLH_MASK, index);
@@ -945,6 +1041,45 @@ static int rzg2l_pinctrl_pinconf_set(struct pinctrl_dev *pctldev,
 
 			rzg2l_rmw_pin_config(pctrl, SR(port_offset),
 					     bit, SR_MASK, !!arg);
+			break;
+		}
+
+		case PIN_CONFIG_BIAS_DISABLE:
+		case PIN_CONFIG_BIAS_PULL_UP:
+		case PIN_CONFIG_BIAS_PULL_DOWN: {
+			unsigned int bias;
+
+			if (!(cfg & PIN_CFG_PUPD))
+				return -EINVAL;
+
+			if (param == PIN_CONFIG_BIAS_DISABLE)
+				bias = pctrl->data->pinconf.pupd.bias_disable[0];
+			else if (param == PIN_CONFIG_BIAS_PULL_DOWN)
+				bias = pctrl->data->pinconf.pupd.bias_pull_down;
+			else
+				bias = pctrl->data->pinconf.pupd.bias_pull_up;
+			rzg2l_rmw_pin_config(pctrl, PUPD(port_offset),
+						bit, PUPD_MASK, bias);
+			break;
+		}
+
+		case PIN_CONFIG_DRIVE_OPEN_DRAIN: {
+			if (!(cfg & PIN_CFG_NOD))
+				return -EINVAL;
+
+			rzg2l_rmw_pin_config(pctrl, NOD(port_offset),
+					     bit, NOD_MASK, 1);
+			break;
+		}
+
+		case PIN_CONFIG_INPUT_SCHMITT_ENABLE: {
+			unsigned int arg = pinconf_to_config_argument(_configs[i]);
+
+			if (!(cfg & PIN_CFG_SMT))
+				return -EINVAL;
+
+			rzg2l_rmw_pin_config(pctrl, SMT(port_offset),
+					     bit, SMT_MASK, !!arg);
 			break;
 		}
 
@@ -1656,18 +1791,18 @@ static const u32 r9a07g043_gpio_configs[] = {
 };
 
 static const u32 r9a09g057_gpio_configs[] = {
-	RZG2L_GPIO_PORT_PACK(8, 0x0, RZG2L_MPXED_PIN_FUNCS),
-	RZG2L_GPIO_PORT_PACK(6, 0x1, RZG2L_MPXED_PIN_FUNCS),
-	RZG2L_GPIO_PORT_PACK(2, 0x2, RZG2L_MPXED_PIN_FUNCS),
-	RZG2L_GPIO_PORT_PACK(8, 0x3, RZG2L_MPXED_PIN_FUNCS),
-	RZG2L_GPIO_PORT_PACK(8, 0x4, RZG2L_MPXED_PIN_FUNCS),
-	RZG2L_GPIO_PORT_PACK(8, 0x5, RZG2L_MPXED_PIN_FUNCS),
-	RZG2L_GPIO_PORT_PACK(8, 0x6, RZG2L_MPXED_PIN_FUNCS),
-	RZG2L_GPIO_PORT_PACK(8, 0x7, RZG2L_MPXED_PIN_FUNCS),
-	RZG2L_GPIO_PORT_PACK(8, 0x8, RZG2L_MPXED_PIN_FUNCS),
-	RZG2L_GPIO_PORT_PACK(8, 0x9, RZG2L_MPXED_PIN_FUNCS),
-	RZG2L_GPIO_PORT_PACK(8, 0xa, RZG2L_MPXED_PIN_FUNCS),
-	RZG2L_GPIO_PORT_PACK(6, 0xb, RZG2L_MPXED_PIN_FUNCS),
+	RZG2L_GPIO_PORT_PACK(8, 0x0, RZV2H_MPXED_PIN_FUNCS),
+	RZG2L_GPIO_PORT_PACK(6, 0x1, RZV2H_MPXED_PIN_FUNCS),
+	RZG2L_GPIO_PORT_PACK(2, 0x2, RZV2H_MPXED_PIN_FUNCS),
+	RZG2L_GPIO_PORT_PACK(8, 0x3, RZV2H_MPXED_PIN_FUNCS),
+	RZG2L_GPIO_PORT_PACK(8, 0x4, RZV2H_MPXED_PIN_FUNCS),
+	RZG2L_GPIO_PORT_PACK(8, 0x5, RZV2H_MPXED_PIN_FUNCS),
+	RZG2L_GPIO_PORT_PACK(8, 0x6, RZV2H_MPXED_PIN_FUNCS),
+	RZG2L_GPIO_PORT_PACK(8, 0x7, RZV2H_MPXED_PIN_FUNCS),
+	RZG2L_GPIO_PORT_PACK(8, 0x8, RZV2H_MPXED_PIN_FUNCS),
+	RZG2L_GPIO_PORT_PACK(8, 0x9, RZV2H_MPXED_PIN_FUNCS),
+	RZG2L_GPIO_PORT_PACK(8, 0xa, RZV2H_MPXED_PIN_FUNCS),
+	RZG2L_GPIO_PORT_PACK(6, 0xb, RZV2H_MPXED_PIN_FUNCS),
 };
 
 static struct {
@@ -2346,6 +2481,7 @@ static struct rzg2l_pinctrl_data r9a07g043_data = {
 	.extended_reg_offset = 0,
 	.have_clrirq_reg = false,
 	.pwpr = PWPR,
+	.pinconf = rzg2l_pinconfigs,
 };
 
 static struct rzg2l_pinctrl_data r9a07g043f_data = {
@@ -2360,6 +2496,7 @@ static struct rzg2l_pinctrl_data r9a07g043f_data = {
 	.extended_reg_offset = 0,
 	.have_clrirq_reg = false,
 	.pwpr = PWPR,
+	.pinconf = rzg2l_pinconfigs,
 };
 
 static struct rzg2l_pinctrl_data r9a07g044_data = {
@@ -2375,6 +2512,7 @@ static struct rzg2l_pinctrl_data r9a07g044_data = {
 	.extended_reg_offset = 0,
 	.have_clrirq_reg = false,
 	.pwpr = PWPR,
+	.pinconf = rzg2l_pinconfigs,
 };
 
 static struct rzg2l_pinctrl_data r9a09g057_data = {
@@ -2391,6 +2529,7 @@ static struct rzg2l_pinctrl_data r9a09g057_data = {
 	.pwpr = PWPR_RZ_V2H,
 	.oen_reg_offset = 0x3C40,
 	.n_ports = ARRAY_SIZE(r9a09g057_gpio_configs),
+	.pinconf = rzv2h_pinconfigs,
 };
 
 static const struct of_device_id rzg2l_pinctrl_of_table[] = {
