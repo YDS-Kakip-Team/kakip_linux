@@ -95,7 +95,6 @@
 #define SR(n)			(0x1400 + (n) * 8)
 #define IEN(n)			(0x1800 + (n) * 8)
 #define ISEL(n)			(0x2C00 + 0x80 + (n) * 8)
-#define NOD(n)			(0x3000 + 0x80 + (n) * 8)
 #define PWPR			(0x3014)
 #define PWPR_RZ_V2H		(0x3C04)
 #define SD_CH(n)		(0x3000 + (n) * 4)
@@ -120,7 +119,6 @@
 #define IEN_MASK		0x01
 #define SR_MASK			0x01
 #define IOLH_MASK		0x03
-#define NOD_MASK		0x01
 
 #define PM_INPUT		0x1
 #define PM_OUTPUT		0x2
@@ -805,15 +803,6 @@ static int rzg2l_pinctrl_pinconf_get(struct pinctrl_dev *pctldev,
 		break;
 	}
 
-	case PIN_CONFIG_DRIVE_OPEN_DRAIN:
-	case PIN_CONFIG_DRIVE_PUSH_PULL:
-		arg = rzg2l_read_pin_config(pctrl, NOD(port_offset), bit, NOD_MASK);
-		if (!arg && param != PIN_CONFIG_DRIVE_PUSH_PULL)
-		return -EINVAL;
-		if (arg && param != PIN_CONFIG_DRIVE_OPEN_DRAIN)
-			return -EINVAL;
-		break;
-
 	case PIN_CONFIG_SLEW_RATE: {
 		if (!(cfg & PIN_CFG_SR))
 			return -EINVAL;
@@ -946,12 +935,6 @@ static int rzg2l_pinctrl_pinconf_set(struct pinctrl_dev *pctldev,
 			rzg2l_rmw_pin_config(pctrl, IOLH(port_offset), bit, IOLH_MASK, index);
 			break;
 		}
-
-		case PIN_CONFIG_DRIVE_OPEN_DRAIN:
-		case PIN_CONFIG_DRIVE_PUSH_PULL:
-			rzg2l_rmw_pin_config(pctrl, NOD(port_offset), bit, NOD_MASK,
-			param == PIN_CONFIG_DRIVE_OPEN_DRAIN ? 1 : 0);
-			break;
 
 		case PIN_CONFIG_SLEW_RATE: {
 			unsigned int arg =
