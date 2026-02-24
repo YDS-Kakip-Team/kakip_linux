@@ -220,6 +220,7 @@
 	sci5_pins: sci5 {
 		pinmux = <RZG2L_PORT_PINMUX(7, 2, 1)>, /* SCI5_TXD_MOSI_SDA */
 			 <RZG2L_PORT_PINMUX(7, 3, 1)>; /* SCI5_RXD_MISO_SCL */
+		bias-pull-up;
 	};
 
 	sd0_pwr_en {
