@@ -23,6 +23,7 @@
 #include <linux/spi/spi.h>
 #include <linux/spi/rspi.h>
 #include <linux/spinlock.h>
+#include <linux/iopoll.h>
 
 /* V2H register*/
 #define RSPI_SPDR		0x00	/* Data Register */
@@ -51,44 +52,46 @@
 #define RSPI_SPFCR		0x6c	/* FIFO Clear Register */
 
 /* SPCR - Control Register - V2H */
-#define SPCR_SPE		BIT(0)		/* Function Enable */
-#define SPCR_SPSCKSEL		(1 << 7)	/* Master Receive Clock Select */
-#define SPCR_SPPE		(1 << 8)	/* Parity Enable */
-#define SPCR_SPOE		(1 << 9)	/* Parity Mode */
-#define SPCR_PTE		(1 << 11)	/* Parity Self-Diagnosis Enable */
-#define SPCR_SCKASE		(1 << 12)	/* RSPCK Auto-Stop Function Enable */
-#define SPCR_BFDS		(1 << 13)	/* Between Burst Transfer Frames Delay Select */
-#define SPCR_MODFEN		(1 << 14)	/* Mode Fault Error Detection Enable */
-#define SPCR_SPEIE		(1 << 16)	/* Error Interrupt Enable */
-#define SPCR_SPRIE		(1 << 17)	/* Receive Buffer Full Interrupt Enable */
-#define SPCR_SPIIE		0x00		/* Idle Interrupt Enable */
-#define SPCR_SPDRES		(1 << 19)	/* Receive Data Ready Error Select */
-#define SPCR_SPTIE		(1 << 20)	/* Transmit Buffer Empty Interrupt Enable */
-#define SPCR_CENDIE		0x00		/* SPI Communication End Interrupt Enable */
-#define SPCR_SPMS		(1 << 24)	/* Function Enable */
-#define SPCR_SPFRF		(1 << 25)	/* Frame Format Select */
-#define SPCR_MSTR		BIT(30)		/* Master/Slave Mode Select */
-#define SPCR_BPEN		(1 << 31)	/* Synchronization Circuit Bypass Enable */
-#define SPCR_TXMD		BIT(28)
+#define SPCR_SPE		BIT(0)	/* Function Enable */
+#define SPCR_SPSCKSEL		BIT(7)	/* Master Receive Clock Select */
+#define SPCR_SPPE		BIT(8)	/* Parity Enable */
+#define SPCR_SPOE		BIT(9)	/* Parity Mode */
+#define SPCR_PTE		BIT(11)	/* Parity Self-Diagnosis Enable */
+#define SPCR_SCKASE		BIT(12)	/* RSPCK Auto-Stop Function Enable */
+#define SPCR_BFDS		BIT(13)	/* Between Burst Transfer Frames Delay Select */
+#define SPCR_MODFEN		BIT(14)	/* Mode Fault Error Detection Enable */
+#define SPCR_SPEIE		BIT(16)	/* Error Interrupt Enable */
+#define SPCR_SPRIE		BIT(17)	/* Receive Buffer Full Interrupt Enable */
+#define SPCR_SPIIE		BIT(18)	/* Idle Interrupt Enable */
+#define SPCR_SPDRES		BIT(19)	/* Receive Data Ready Error Select */
+#define SPCR_SPTIE		BIT(20)	/* Transmit Buffer Empty Interrupt Enable */
+#define SPCR_CENDIE		BIT(21)	/* SPI Communication End Interrupt Enable */
+#define SPCR_SPMS		BIT(24)	/* Function Enable */
+#define SPCR_SPFRF		BIT(25)	/* Frame Format Select */
+#define SPCR_MSTR		BIT(30)	/* Master/Slave Mode Select */
+#define SPCR_BPEN		BIT(31)	/* Synchronization Circuit Bypass Enable */
+#define SPCR_TXMD		BIT(28)	/* Communication Mode Select */
 
 /* SPPCR - Pin Control Register */
-#define SPPCR_MOIFE		0x10	/* MOSI Idle Value Fixing Enable */
-#define SPPCR_MOIFV		0x08	/* MOSI Idle Fixed Value */
-#define SPPCR_SPOM		0x02
-#define SPPCR_SPLP2		0x01	/* Loopback Mode 2 (non-inverting) */
-#define SPPCR_SPLP		0x00	/* Loopback Mode (inverting) */
+#define SPPCR_MOIFE		0x20	/* MOSI Idle Value Fixing Enable */
+#define SPPCR_MOIFV		0x10	/* MOSI Idle Fixed Value */
+#define SPPCR_SPOM		0x04
+#define SPPCR_SPLP2		0x02	/* Loopback Mode 2 (non-inverting) */
+#define SPPCR_SPLP		0x01	/* Loopback Mode (inverting) */
 
 #define SPPCR_IO3FV		0x04	/* Single-/Dual-SPI Mode IO3 Output Fixed Value */
 #define SPPCR_IO2FV		0x04	/* Single-/Dual-SPI Mode IO2 Output Fixed Value */
 
 /* SPSR - Status Register - V2H*/
 #define SPSR_SPRF		BIT(15)		/* Receive Buffer Full Flag */
+#define SPSR_CENDF		BIT(14)		/* Communication completed */
 #define SPSR_SPTEF		BIT(13)		/* Transmit Buffer Empty Flag */
 #define SPSR_PERF		BIT(11)		/* Parity Error Flag */
+#define SPSR_UDRF		BIT(12)		/* Underrun Error Flag */
 #define SPSR_MODF		BIT(10)		/* Mode Fault Error Flag */
 #define SPSR_IDLNF		BIT(9)		/* RSPI Idle Flag */
 #define SPSR_OVRF		BIT(8)		/* Overrun Error Flag (RSPI only) */
-#define SPSR_CENDF		BIT(14)		/* Communication completed */
+#define SPSR_SPDRF		BIT(7)		/* SPI Receive Data Ready Flag */
 
 /* V2H only */
 #define SPDCR_BYSW		0x00	/* Byte Swap Operating Mode Select */
@@ -99,12 +102,14 @@
 #define SPDCR2_RTRG		0x0000	/* Receive FIFO threshold setting */
 
  /* SPSRC - Status Clear Register */
+#define SPSRC_SPRFC		BIT(15) /* SPI Receive Buffer Full Flag Clear */
+#define SPSRC_CENDFC		BIT(14)	/* Communication End Flag Clear */
+#define SPSRC_SPTEFC		BIT(13) /* SPI Transmit Buffer Empty Flag Clear */
+#define SPSRC_UDRFC		BIT(12) /* Underrun Error Flag Clear */
 #define SPSRC_PERFC		BIT(11) /* Clear Parity Error */
 #define SPSRC_MODFC		BIT(10) /* CLear Mode Fault Error Flag */
 #define SPSRC_OVRFC		BIT(8)	/* Clear Overrun Error Flag */
 #define SPSRC_SPDRFC		BIT(7)	/* Clear Data Ready Flag */
-#define SPSRC_SPTEFC		BIT(13) /* SPI Transmit Buffer Empty Flag Clear */
-#define SPSRC_SPRFC		BIT(15) /* SPI Receive Buffer Full Flag Clear */
 
  /* SPFCR - FIFO Clear Register */
 #define SPFCR_SPFRST		BIT(0)	/* Clear FIFO Register */
@@ -122,25 +127,22 @@
 #define SSLP_SSLP(i)		BIT(i)	/* SSLi Signal Polarity Setting */
 
  /* SPCR2 - Control Register 2 */
-#define SPCR2_PTE		0x08	/* Parity Self-Test Enable */
-#define SPCR2_SPIE		0x04	/* Idle Interrupt Enable */
-#define SPCR2_SPOE		0x02	/* Odd Parity Enable (vs. Even) */
-#define SPCR2_SPPE		0x01	/* Parity Enable */
+#define SPCR2_SPSCKDL_MASK	0x07	/* SPI Master Receive Clock Analog Delay (0-7.7ns) */
 
 /* SPCMDn - Command Registers V2H */
-#define SPCMD_SCKDEN		0x00008000	/* Clock Delay Setting Enable */
-#define SPCMD_SLNDEN		0x00004000	/* SSL Negation Delay Setting Enable */
-#define SPCMD_SPNDEN		0x00002000	/* Next-Access Delay Enable */
-#define SPCMD_LSBF		0x00001000	/* LSB First */
+#define SPCMD_SCKDEN		BIT(15)		/* Clock Delay Setting Enable */
+#define SPCMD_SLNDEN		BIT(14)		/* SSL Negation Delay Setting Enable */
+#define SPCMD_SPNDEN		BIT(13)		/* Next-Access Delay Enable */
+#define SPCMD_LSBF		BIT(12)		/* LSB First */
 #define SPCMD_SPB_MASK		GENMASK(20, 16)
-#define SPCMD_SPB_8BIT		0x00070000
-#define SPCMD_SPB_16BIT		0x000F0000
-#define SPCMD_SPB_32BIT		0x001F0000
-#define SPCMD_SSLKP		0x00000080	/* SSL Signal Level Keeping */
-#define SPCMD_CPOL		0x00000002	/* Clock Polarity Setting */
-#define SPCMD_CPHA		0x00000001	/* Clock Phase Setting */
+#define SPCMD_SPB_8BIT		(0x7 << 16)
+#define SPCMD_SPB_16BIT		(0xf << 16)
+#define SPCMD_SPB_32BIT		(0x1f << 16)
+#define SPCMD_SSLKP		BIT(7)		/* SSL Signal Level Keeping */
+#define SPCMD_CPOL		BIT(1)		/* Clock Polarity Setting */
+#define SPCMD_CPHA		BIT(0)		/* Clock Phase Setting */
 #define SPCMD_BRDV(brdv)	((brdv) << 2)
-#define SPCMD_SSLA(i)		((i) << 4)	/* SSL Assert Signal Setting */
+#define SPCMD_SSLA(i)		((i) << 24)	/* SSL Assert Signal Setting */
 
 struct rspi_data {
 	void __iomem *addr;
@@ -149,16 +151,17 @@ struct rspi_data {
 	struct platform_device *pdev;
 	wait_queue_head_t wait;
 	spinlock_t lock;	/* Protects RMW-access to RSPI_SSLP */
-	struct clk *clk;
+	struct clk *tclk;
 	u32 spcmd;
 	u16 spsr;
 	u8 sppcr;
-	int rx_irq, tx_irq;
+	int rx_irq, tx_irq, cend_irq;
 	int bits_per_word;
 	const struct spi_ops *ops;
 
 	unsigned dma_callbacked:1;
 	unsigned byte_access:1;
+	struct reset_control *rstc;
 };
 
 static void rspi_write8(const struct rspi_data *rspi, u8 data, u16 offset)
@@ -220,7 +223,7 @@ static void rspi_set_rate(struct rspi_data *rspi)
 	int brdv = 0, spbr;
 
 	if (!spi_controller_is_slave(rspi->ctlr)) {
-		clksrc = clk_get_rate(rspi->clk);
+		clksrc = clk_get_rate(rspi->tclk);
 		spbr = DIV_ROUND_UP(clksrc, 2 * rspi->speed_hz) - 1;
 		while (spbr > 255 && brdv < 3) {
 			brdv++;
@@ -263,6 +266,7 @@ static int rspi_v2h_set_config_register(struct rspi_data *rspi, int access_size)
 	/* Sets RSPI mode */
 	if (!spi_controller_is_slave(rspi->ctlr))
 		rspi_write32(rspi, SPCR_MSTR, RSPI_SPCR);
+
 	return 0;
 }
 
@@ -284,10 +288,13 @@ static int rspi_wait_for_interrupt(struct rspi_data *rspi, u16 wait_mask,
 	rspi->spsr = rspi_read16(rspi, RSPI_SPSR);
 	if (rspi->spsr & wait_mask)
 		return 0;
+
 	rspi_enable_irq(rspi, enable_bit);
+
 	ret = wait_event_timeout(rspi->wait, rspi->spsr & wait_mask, 10 * HZ);
 	if (ret == 0 && !(rspi->spsr & wait_mask))
 		return -ETIMEDOUT;
+
 	return 0;
 }
 
@@ -299,6 +306,11 @@ static inline int rspi_wait_for_tx_empty(struct rspi_data *rspi)
 static inline int rspi_wait_for_rx_full(struct rspi_data *rspi)
 {
 	return rspi_wait_for_interrupt(rspi, SPSR_SPRF, SPCR_SPRIE);
+}
+
+static inline int rspi_wait_for_communication_end(struct rspi_data *rspi)
+{
+	return rspi_wait_for_interrupt(rspi, SPSR_CENDF, SPCR_CENDIE);
 }
 
 static void rspi_data_out_8(struct rspi_data *rspi, const void *tx, int count)
@@ -349,7 +361,7 @@ static int rspi_pio_transfer(struct rspi_data *rspi, const void *tx, void *rx,
 	int words = n / (rspi->bits_per_word / 8);
 	void (*tx_fifo)(struct rspi_data *rspi, const void *tx, int count);
 	void (*rx_fifo)(struct rspi_data *rspi, void *rx, int count);
-	int ret, count;
+	int ret, count, loop, loop_count, remained_words, words_per_loop;
 
 	switch (rspi->bits_per_word) {
 	case 8:
@@ -367,27 +379,50 @@ static int rspi_pio_transfer(struct rspi_data *rspi, const void *tx, void *rx,
 	default:
 		return -EINVAL;
 	}
-	for (count = 0; count < words; count++) {
+
+	if (words % rspi->ops->fifo_size)
+		loop = words / rspi->ops->fifo_size + 1;
+	else
+		loop = words / rspi->ops->fifo_size;
+
+	for (loop_count = 0; loop_count < loop; loop_count++) {
+		remained_words = words - loop_count * rspi->ops->fifo_size;
+		words_per_loop = (remained_words > rspi->ops->fifo_size) ?
+					rspi->ops->fifo_size : remained_words;
+
 		if (tx) {
-			ret = rspi_wait_for_tx_empty(rspi);
-			if (ret < 0) {
-				dev_err(&rspi->ctlr->dev, "transmit timeout\n");
-				return ret;
+			for (count = 0; count < words_per_loop; count++) {
+				rspi_write16(rspi, SPSRC_SPTEFC, RSPI_SPSRC);
+
+				ret = rspi_wait_for_tx_empty(rspi);
+				if (ret < 0) {
+					dev_err(&rspi->ctlr->dev, "transmit timeout\n");
+					return ret;
+				}
+
+				tx_fifo(rspi, tx, count + loop_count * rspi->ops->fifo_size);
 			}
-			tx_fifo(rspi, tx, count);
+		}
+
+		if (rx) {
+			ret = rspi_wait_for_communication_end(rspi);
+			for (count = 0; count < words_per_loop; count++) {
+				if (ret < 0) {
+					rspi_write16(rspi, SPSRC_SPRFC, RSPI_SPSRC);
+
+					ret = rspi_wait_for_rx_full(rspi);
+					if (ret < 0) {
+						dev_err(&rspi->ctlr->dev,
+							"receive timeout %d\n", count);
+						return ret;
+					}
+				}
+
+				rx_fifo(rspi, rx, count + loop_count * rspi->ops->fifo_size);
+			}
 		}
 	}
 
-	for (count = 0; count < words; count++) {
-		if (rx) {
-			ret = rspi_wait_for_rx_full(rspi);
-			if (ret < 0) {
-				dev_err(&rspi->ctlr->dev, "receive timeout %d\n", count);
-				return ret;
-			}
-			rx_fifo(rspi, rx, count);
-		}
-	}
 	return 0;
 }
 
@@ -516,6 +551,7 @@ static void rspi_receive_init(const struct rspi_data *rspi)
 	spsr = rspi_read16(rspi, RSPI_SPSR);
 	if (spsr & SPSR_SPRF)
 		rspi_read_data(rspi);	/* dummy read */
+
 	if (spsr & SPSR_OVRF)
 		rspi_write16(rspi, rspi_read16(rspi, RSPI_SPSR) & ~SPSR_OVRF,
 								RSPI_SPSR);
@@ -557,6 +593,7 @@ static int rspi_dma_check_then_transfer(struct rspi_data *rspi,
 		width = DMA_SLAVE_BUSWIDTH_2_BYTES;
 	else
 		width = DMA_SLAVE_BUSWIDTH_4_BYTES;
+
 	cfg.dst_addr = rspi->pdev->resource->start + RSPI_SPDR;
 	cfg.src_addr = rspi->pdev->resource->start + RSPI_SPDR;
 	cfg.dst_addr_width = width;
@@ -590,6 +627,7 @@ static int rspi_common_transfer(struct rspi_data *rspi,
 
 	/* Wait for the last transmission */
 	rspi_wait_for_tx_empty(rspi);
+
 	return 0;
 }
 
@@ -600,6 +638,7 @@ static int rspi_v2h_transfer_one(struct spi_controller *ctlr,
 	struct rspi_data *rspi = spi_controller_get_devdata(ctlr);
 
 	rspi_v2h_receive_init(rspi);
+
 	return rspi_common_transfer(rspi, xfer);
 }
 
@@ -623,6 +662,7 @@ static int rspi_setup(struct spi_device *spi)
 
 	spin_unlock_irq(&rspi->lock);
 	pm_runtime_put(&rspi->pdev->dev);
+
 	return 0;
 }
 
@@ -677,12 +717,11 @@ static int rspi_prepare_message(struct spi_controller *ctlr,
 	rspi_write16(rspi, rspi_read16(rspi, RSPI_SPSRC) | SPSRC_SPDRFC, RSPI_SPSRC);
 
 	/* FIFO Clear */
-	rspi_write16(rspi, SPFCR_SPFRST, RSPI_SPFCR);
+	rspi_write8(rspi, SPFCR_SPFRST, RSPI_SPFCR);
 
 	/* Prohibit SPII and SPCEND interrupt */
-
-	rspi_write32(rspi, rspi_read32(rspi, RSPI_SPCR) | SPCR_SPIIE, RSPI_SPCR);
-	rspi_write32(rspi, rspi_read32(rspi, RSPI_SPCR) | SPCR_CENDIE, RSPI_SPCR);
+	rspi_write32(rspi, rspi_read32(rspi, RSPI_SPCR) & ~(SPCR_CENDIE | SPCR_SPIIE)
+							, RSPI_SPCR);
 
 	/* Enable SPI function in master mode */
 	rspi_write32(rspi, rspi_read32(rspi, RSPI_SPCR) | SPCR_SPE, RSPI_SPCR);
@@ -698,7 +737,6 @@ static int rspi_unprepare_message(struct spi_controller *ctlr,
 	rspi_write32(rspi, rspi_read32(rspi, RSPI_SPCR) & ~SPCR_SPE, RSPI_SPCR);
 
 	/* Reset sequencer for Single SPI Transfers */
-
 	rspi_write32(rspi, rspi->spcmd, RSPI_SPCMD0);
 	rspi_write8(rspi, 0, RSPI_SPSCR);
 
@@ -748,6 +786,20 @@ static irqreturn_t rspi_irq_tx(int irq, void *_sr)
 	rspi->spsr = spsr = rspi_read16(rspi, RSPI_SPSR);
 	if (spsr & SPSR_SPTEF) {
 		rspi_disable_irq(rspi, SPCR_SPTIE);
+		wake_up(&rspi->wait);
+		return IRQ_HANDLED;
+	}
+	return 0;
+}
+
+static irqreturn_t rspi_irq_cend(int irq, void *_sr)
+{
+	struct rspi_data *rspi = _sr;
+	u16 spsr;
+
+	rspi->spsr = spsr = rspi_read16(rspi, RSPI_SPSR);
+	if (spsr & SPSR_CENDF) {
+		rspi_disable_irq(rspi, SPCR_CENDIE);
 		wake_up(&rspi->wait);
 		return IRQ_HANDLED;
 	}
@@ -832,7 +884,7 @@ static const struct spi_ops rspi_v2h_ops = {
 	.min_div		=	2,
 	.max_div		=	4096,
 	.flags			=	SPI_CONTROLLER_MUST_RX | SPI_CONTROLLER_MUST_TX,
-	.fifo_size		=	8,	/* 8 for TX, 32 for RX */
+	.fifo_size		=	16,	/* 16 for TX, 16 for RX */
 	.num_hw_ss		=	1,
 };
 
@@ -840,6 +892,8 @@ static const struct spi_ops rspi_v2h_ops = {
 static const struct of_device_id rspi_of_match[] = {
 	/* RSPI on V2H */
 	{ .compatible = "renesas,rspi-v2h", .data = &rspi_v2h_ops },
+	{ .compatible = "renesas,rspi-v2n", .data = &rspi_v2h_ops },
+	{ .compatible = "renesas,rspi-g3e", .data = &rspi_v2h_ops },
 	{ /* sentinel */ }
 };
 
@@ -858,6 +912,7 @@ static int rspi_mode(struct device *dev)
 
 static int rspi_parse_dt(struct device *dev, struct spi_controller *ctlr)
 {
+	struct rspi_data *rspi = dev_get_drvdata(dev);
 	struct reset_control *rstc;
 	u32 num_cs;
 	int error;
@@ -871,10 +926,11 @@ static int rspi_parse_dt(struct device *dev, struct spi_controller *ctlr)
 
 	ctlr->num_chipselect = num_cs;
 
-	rstc = devm_reset_control_get_optional_exclusive(dev, NULL);
+	rstc = devm_reset_control_array_get(dev, false, false);
 	if (IS_ERR(rstc))
 		return dev_err_probe(dev, PTR_ERR(rstc),
 						"failed to get reset ctrl\n");
+	rspi->rstc = rstc;
 
 	error = reset_control_deassert(rstc);
 	if (error) {
@@ -925,8 +981,13 @@ static int rspi_probe(struct platform_device *pdev)
 		ctlr = spi_alloc_master(&pdev->dev, sizeof(struct rspi_data));
 	else
 		ctlr = spi_alloc_slave(&pdev->dev, sizeof(struct rspi_data));
+
 	if (ctlr == NULL)
 		return -ENOMEM;
+
+	rspi = spi_controller_get_devdata(ctlr);
+	platform_set_drvdata(pdev, rspi);
+
 	ops = of_device_get_match_data(&pdev->dev);
 	if (ops) {
 		ret = rspi_parse_dt(&pdev->dev, ctlr);
@@ -941,8 +1002,6 @@ static int rspi_probe(struct platform_device *pdev)
 			ctlr->num_chipselect = 2; /* default */
 	}
 
-	rspi = spi_controller_get_devdata(ctlr);
-	platform_set_drvdata(pdev, rspi);
 	rspi->ops = ops;
 	rspi->ctlr = ctlr;
 
@@ -953,16 +1012,16 @@ static int rspi_probe(struct platform_device *pdev)
 		goto error1;
 	}
 
-	rspi->clk = devm_clk_get(&pdev->dev, NULL);
-	if (IS_ERR(rspi->clk)) {
+	rspi->tclk = devm_clk_get(&pdev->dev, "tclk");
+	if (IS_ERR(rspi->tclk)) {
 		dev_err(&pdev->dev, "cannot get clock\n");
-		ret = PTR_ERR(rspi->clk);
+		ret = PTR_ERR(rspi->tclk);
 		goto error1;
 	}
 
 	rspi->pdev = pdev;
 	pm_runtime_enable(&pdev->dev);
-	ret = pm_runtime_resume_and_get(&pdev->dev);
+	pm_runtime_resume_and_get(&pdev->dev);
 
 	init_waitqueue_head(&rspi->wait);
 	spin_lock_init(&rspi->lock);
@@ -975,26 +1034,36 @@ static int rspi_probe(struct platform_device *pdev)
 	ctlr->unprepare_message = rspi_unprepare_message;
 	ctlr->mode_bits = SPI_CPHA | SPI_CPOL | SPI_CS_HIGH | SPI_LSB_FIRST |
 						SPI_LOOP | ops->extra_mode_bits;
-	clksrc = clk_get_rate(rspi->clk);
+	clksrc = clk_get_rate(rspi->tclk);
 	ctlr->min_speed_hz = DIV_ROUND_UP(clksrc, ops->max_div);
 	ctlr->max_speed_hz = DIV_ROUND_UP(clksrc, ops->min_div);
 	ctlr->flags = ops->flags;
 	ctlr->dev.of_node = pdev->dev.of_node;
 	ctlr->use_gpio_descriptors = true;
 	ctlr->max_native_cs = rspi->ops->num_hw_ss;
-	ret = platform_get_irq_byname_optional(pdev, "rx");
 
+	ret = platform_get_irq_byname_optional(pdev, "rx");
 	if (ret < 0) {
 		ret = platform_get_irq_byname_optional(pdev, "mux");
 		if (ret < 0)
 			ret = platform_get_irq(pdev, 0);
-		if (ret >= 0)
+		if (ret >= 0) {
 			rspi->rx_irq = rspi->tx_irq = ret;
+			rspi->cend_irq = ret;
+		}
 	} else {
 		rspi->rx_irq = ret;
 		ret = platform_get_irq_byname(pdev, "tx");
 		if (ret >= 0)
 			rspi->tx_irq = ret;
+
+		ret = platform_get_irq_byname(pdev, "cend");
+		if (ret < 0) {
+			dev_err(&pdev->dev, "Failed to get CEND IRQ\n");
+			return ret;
+		}
+
+		rspi->cend_irq = ret;
 	}
 
 	if (rspi->rx_irq == rspi->tx_irq) {
@@ -1002,7 +1071,9 @@ static int rspi_probe(struct platform_device *pdev)
 		ret = rspi_request_irq(&pdev->dev, rspi->rx_irq, rspi_irq_mux,
 				"mux", rspi);
 	} else {
-		/* Multi-interrupt mode, only SPRI and SPTI are used */
+		/* Multi-interrupt mode, only SPRI, SPCEND and SPTI are used */
+		ret = rspi_request_irq(&pdev->dev, rspi->cend_irq, rspi_irq_cend,
+				"cend", rspi);
 		ret = rspi_request_irq(&pdev->dev, rspi->rx_irq, rspi_irq_rx,
 				"rx", rspi);
 		if (!ret)
@@ -1050,12 +1121,23 @@ static int rspi_suspend(struct device *dev)
 {
 	struct rspi_data *rspi = dev_get_drvdata(dev);
 
+	reset_control_assert(rspi->rstc);
+	pm_runtime_put(dev);
+
 	return spi_controller_suspend(rspi->ctlr);
 }
 
 static int rspi_resume(struct device *dev)
 {
 	struct rspi_data *rspi = dev_get_drvdata(dev);
+
+	int ret;
+
+	ret = reset_control_deassert(rspi->rstc);
+	if (ret < 0)
+		return ret;
+
+	pm_runtime_get(dev);
 
 	return spi_controller_resume(rspi->ctlr);
 }
@@ -1080,4 +1162,3 @@ module_platform_driver(rspi_driver);
 
 MODULE_DESCRIPTION("Renesas RSPI bus driver");
 MODULE_LICENSE("GPL v2");
-MODULE_AUTHOR("Thang Dinh <thang.dinh.fv@renesas.com>");
