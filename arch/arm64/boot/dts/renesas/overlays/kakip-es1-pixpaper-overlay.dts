@@ -1,0 +1,41 @@
+/dts-v1/;
+/plugin/;
+
+#include <dt-bindings/pinctrl/rzg2l-pinctrl.h>
+#include <dt-bindings/gpio/gpio.h>
+
+/ {
+	fragment@0 {
+		target = <&pinctrl>;
+		__overlay__ {
+			spi0_pins: spi0 {
+				pinmux = <RZG2L_PORT_PINMUX(9, 1, 1)>,
+					<RZG2L_PORT_PINMUX(9, 0, 1)>,
+					<RZG2L_PORT_PINMUX(9, 2, 1)>,
+					<RZG2L_PORT_PINMUX(9, 3, 1)>,
+					<RZG2L_PORT_PINMUX(9, 4, 1)>;
+			};
+		};
+	};
+
+	fragment@1 {
+		target = <&spi0>;
+		__overlay__ {
+			pinctrl-0 = <&spi0_pins>;
+			pinctrl-names = "default";
+			status = "okay";
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			display0: display@0 {
+				compatible = "mayqueen,pixpaper";
+				reg = <0>;
+				spi-max-frequency = <1000000>;
+				reset-gpios = <&pinctrl RZG2L_GPIO(10, 7) GPIO_ACTIVE_HIGH>;
+				busy-gpios = <&pinctrl RZG2L_GPIO(11, 3) GPIO_ACTIVE_HIGH>;
+				dc-gpios = <&pinctrl RZG2L_GPIO(7, 4) GPIO_ACTIVE_HIGH>;
+			};
+		};
+	};
+};
+
