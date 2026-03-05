@@ -6,3 +6,4 @@ dtbo-$(CONFIG_ARCH_R9A09G057) += kakip-es1-spi0.dtbo \
 				 kakip-es1-imx462.dtbo \
 				 kakip-es1-i2c10.dtbo \
 				 kakip-es1-tc358743.dtbo \
+				 kakip-es1-pixpaper.dtbo \
